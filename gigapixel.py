@@ -29,6 +29,7 @@ class GigapixelUpscaleSettings:
                 'sharpen': ('FLOAT', {'default': 1, 'min': 1, 'max': 100, 'round': False, 'display': 'Sharpen Strength'}),
                 'denoise': ('FLOAT', {'default': 1, 'min': 1, 'max': 100, 'round': False, 'display': 'Denoise Strength'}),
                 'compression': ('FLOAT', {'default': 67, 'min': 1, 'max': 100, 'round': False, 'display': 'Compression'}),
+                'fr': ('FLOAT', {'default': 50, 'min': 1, 'max': 100, 'round': False, 'display': 'Fine Detail Retention'}),
             },
             'optional': {},
         }
@@ -40,13 +41,14 @@ class GigapixelUpscaleSettings:
     OUTPUT_NODE = False
     OUTPUT_IS_LIST = (False,)
     
-    def init(self, enabled, model, scale, sharpen, denoise, compression):
+    def init(self, enabled, model, scale, sharpen, denoise, compression, fr):
         self.enabled = str(True).lower() == enabled.lower()
         self.model = model
         self.scale = scale
         self.sharpen = sharpen
         self.denoise = denoise
         self.compression = compression
+        self.fr = fr
         return (self,)
 
 
@@ -167,6 +169,10 @@ class GigapixelAI:
             
             if upscale.compression < 100:
                 gigapixel_args.extend(['--cm', str(upscale.compression)])
+
+            if upscale.fr > 1:
+                gigapixel_args.extend(['--fr', str(upscale.fr)])
+                
         else:
             gigapixel_args.extend([
                 '--scale', '2',
@@ -199,7 +205,8 @@ class GigapixelAI:
                 'model': upscale.model if upscale else 'Standard',
                 'denoise': upscale.denoise if upscale else 1,
                 'sharpen': upscale.sharpen if upscale else 1,
-                'compression': upscale.compression if upscale else 67
+                'compression': upscale.compression if upscale else 67,
+                'fr': upscale.fr if upscale else 50
             }
             settings_json = json.dumps(settings, indent=2).replace('"', "'")
 
