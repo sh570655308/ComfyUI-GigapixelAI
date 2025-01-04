@@ -44,8 +44,8 @@ class GigapixelAI:
     def __init__(self):
         self.this_dir = os.path.dirname(os.path.abspath(__file__))
         self.comfy_dir = os.path.abspath(os.path.join(self.this_dir, '..', '..'))
-        self.subfolder = 'upscaled'
-        self.output_dir = os.path.join(self.comfy_dir, 'temp')
+        # 使用单层输出目录结构
+        self.output_dir = os.path.join(self.comfy_dir, 'temp', 'gigapixel_output')
         self.prefix = 'gigapixel'
 
     @classmethod
@@ -85,11 +85,12 @@ class GigapixelAI:
         return image
 
     def upscale_image(self, images, scale, gigapixel_exe=None, upscale: Optional[GigapixelUpscaleSettings]=None):
-        now_millis = int(time.time() * 1000)
-        prefix = '%s-%d' % (self.prefix, now_millis)
+        # 确保输出目录存在
+        os.makedirs(self.output_dir, exist_ok=True)
         
-        batch_output_dir = os.path.join(self.output_dir, self.subfolder, f'batch_{now_millis}')
-        os.makedirs(batch_output_dir, exist_ok=True)
+        now_millis = int(time.time() * 1000)
+        batch_dir = os.path.join(self.output_dir, f'batch_{now_millis}')
+        os.makedirs(batch_dir, exist_ok=True)
         
         upscaled_images = []
         upscale_settings = []
@@ -100,11 +101,16 @@ class GigapixelAI:
             count += 1
             i = 255.0 * image.cpu().numpy()
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            img_file = self.save_image(img, self.output_dir, '%s-%d.png' % (prefix, count))
             
-            self.output_dir = batch_output_dir
+            # 使用更短的输入文件路径
+            img_file = os.path.join(batch_dir, f'input_{count}.png')
+            self.save_image(img, os.path.dirname(img_file), os.path.basename(img_file))
             
-            (settings, output_image_paths) = self.gigapixel_upscale(img_file, gigapixel_exe, scale, upscale)
+            # 为每个批次创建单独的输出目录
+            output_dir = os.path.join(batch_dir, f'output_{count}')
+            os.makedirs(output_dir, exist_ok=True)
+            
+            (settings, output_image_paths) = self.gigapixel_upscale(img_file, gigapixel_exe, scale, upscale, output_dir)
             
             for output_path in output_image_paths:
                 upscaled_image = self.load_image(output_path)
@@ -114,12 +120,17 @@ class GigapixelAI:
 
         return (upscale_settings, upscale_image_paths, upscaled_images)
 
-    def gigapixel_upscale(self, img_file, gigapixel_exe, scale, upscale: Optional[GigapixelUpscaleSettings]=None):
+    def gigapixel_upscale(self, img_file, gigapixel_exe, scale, upscale: Optional[GigapixelUpscaleSettings]=None, target_dir=None):
         if not os.path.exists(gigapixel_exe):
             raise ValueError(f'Gigapixel AI not found: {gigapixel_exe}')
         
-        target_dir = self.output_dir
+        if target_dir is None:
+            target_dir = os.path.join(self.output_dir, 'default_output')
         os.makedirs(target_dir, exist_ok=True)
+        
+        # 验证路径长度
+        if len(img_file) > 250 or len(target_dir) > 250:
+            raise ValueError(f"Path too long. Input: {len(img_file)} chars, Output: {len(target_dir)} chars")
         
         gigapixel_args = [gigapixel_exe]
         
