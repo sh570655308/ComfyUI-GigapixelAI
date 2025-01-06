@@ -6,6 +6,7 @@ import folder_paths
 import torch
 import subprocess
 import json
+import shutil
 
 from PIL import Image, ImageOps
 from typing import Optional
@@ -39,12 +40,44 @@ class GigapixelUpscaleSettings:
         self.fr = fr
         return (self,)
 
+class GigapixelModelSettings:
+    MODEL_MAPPING = {
+        'Art & CG': 'art',
+        'Lines': 'lines',
+        'Very Compressed': 'vc',
+        'High Fidelity': 'fidelity',
+        'Low Resolution': 'lowres',
+        'Standard': 'std',
+        'Text & Shapes': 'text'
+    }
+
+    # 需要添加 mv 2 参数的模型列表
+    MV2_MODELS = {'std', 'fidelity', 'lowres'}
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            'required': {
+                'model': (list(cls.MODEL_MAPPING.keys()), {'default': 'Standard'}),
+            },
+        }
+
+    RETURN_TYPES = ('GigapixelModelSettings',)
+    RETURN_NAMES = ('model_settings',)
+    FUNCTION = 'init'
+    CATEGORY = 'image'
+    OUTPUT_NODE = False
+    OUTPUT_IS_LIST = (False,)
+
+    def init(self, model):
+        self.model = self.MODEL_MAPPING[model]
+        self.needs_mv2 = self.model in self.MV2_MODELS
+        return (self,)
 
 class GigapixelAI:
     def __init__(self):
         self.this_dir = os.path.dirname(os.path.abspath(__file__))
         self.comfy_dir = os.path.abspath(os.path.join(self.this_dir, '..', '..'))
-        # 使用单层输出目录结构
         self.output_dir = os.path.join(self.comfy_dir, 'temp', 'gigapixel_output')
         self.prefix = 'gigapixel'
 
@@ -54,10 +87,12 @@ class GigapixelAI:
             'required': {
                 'images': ('IMAGE',),
                 'scale': ('FLOAT', {'default': 2.0, 'min': 1, 'max': 16, 'round': False}),
+                'no_temp': (['true', 'false'], {'default': 'true'}),
             },
             'optional': {
                 'gigapixel_exe': ('STRING', {'default': '', }),
                 'upscale': ('GigapixelUpscaleSettings',),
+                'model': ('GigapixelModelSettings',),
             },
             "hidden": {}
         }
@@ -84,8 +119,7 @@ class GigapixelAI:
         image = torch.from_numpy(image)[None,]
         return image
 
-    def upscale_image(self, images, scale, gigapixel_exe=None, upscale: Optional[GigapixelUpscaleSettings]=None):
-        # 确保输出目录存在
+    def upscale_image(self, images, scale, no_temp, gigapixel_exe=None, upscale: Optional[GigapixelUpscaleSettings]=None, model: Optional[GigapixelModelSettings]=None):
         os.makedirs(self.output_dir, exist_ok=True)
         
         now_millis = int(time.time() * 1000)
@@ -96,31 +130,37 @@ class GigapixelAI:
         upscale_settings = []
         upscale_image_paths = []
         
-        count = 0
-        for image in images:
-            count += 1
-            i = 255.0 * image.cpu().numpy()
-            img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            
-            # 使用更短的输入文件路径
-            img_file = os.path.join(batch_dir, f'input_{count}.png')
-            self.save_image(img, os.path.dirname(img_file), os.path.basename(img_file))
-            
-            # 为每个批次创建单独的输出目录
-            output_dir = os.path.join(batch_dir, f'output_{count}')
-            os.makedirs(output_dir, exist_ok=True)
-            
-            (settings, output_image_paths) = self.gigapixel_upscale(img_file, gigapixel_exe, scale, upscale, output_dir)
-            
-            for output_path in output_image_paths:
-                upscaled_image = self.load_image(output_path)
-                upscaled_images.append(upscaled_image)
-                upscale_settings.append(settings)
-                upscale_image_paths.append(output_path)
+        try:
+            count = 0
+            for image in images:
+                count += 1
+                i = 255.0 * image.cpu().numpy()
+                img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+                
+                img_file = os.path.join(batch_dir, f'input_{count}.png')
+                self.save_image(img, os.path.dirname(img_file), os.path.basename(img_file))
+                
+                output_dir = os.path.join(batch_dir, f'output_{count}')
+                os.makedirs(output_dir, exist_ok=True)
+                
+                (settings, output_image_paths) = self.gigapixel_upscale(img_file, gigapixel_exe, scale, upscale, model, output_dir)
+                
+                for output_path in output_image_paths:
+                    upscaled_image = self.load_image(output_path)
+                    upscaled_images.append(upscaled_image)
+                    upscale_settings.append(settings)
+                    upscale_image_paths.append(output_path)
+        finally:
+            # 如果no_temp为true，清理临时目录
+            if str(True).lower() == no_temp.lower():
+                try:
+                    shutil.rmtree(batch_dir)
+                except Exception as e:
+                    print(f"Error cleaning up temporary directory: {e}")
 
         return (upscale_settings, upscale_image_paths, upscaled_images)
 
-    def gigapixel_upscale(self, img_file, gigapixel_exe, scale, upscale: Optional[GigapixelUpscaleSettings]=None, target_dir=None):
+    def gigapixel_upscale(self, img_file, gigapixel_exe, scale, upscale: Optional[GigapixelUpscaleSettings]=None, model: Optional[GigapixelModelSettings]=None, target_dir=None):
         if not os.path.exists(gigapixel_exe):
             raise ValueError(f'Gigapixel AI not found: {gigapixel_exe}')
         
@@ -128,7 +168,6 @@ class GigapixelAI:
             target_dir = os.path.join(self.output_dir, 'default_output')
         os.makedirs(target_dir, exist_ok=True)
         
-        # 验证路径长度
         if len(img_file) > 250 or len(target_dir) > 250:
             raise ValueError(f"Path too long. Input: {len(img_file)} chars, Output: {len(target_dir)} chars")
         
@@ -156,6 +195,13 @@ class GigapixelAI:
                 '-i', img_file,
                 '-o', target_dir
             ])
+
+        # 添加模型参数
+        if model:
+            gigapixel_args.extend(['--model', model.model])
+            # 对于特定模型添加 mv 2 参数
+            if model.needs_mv2:
+                gigapixel_args.extend(['--mv', '2'])
         
         try:
             print(f"执行命令: {' '.join(gigapixel_args)}")
@@ -182,7 +228,9 @@ class GigapixelAI:
                 'denoise': upscale.denoise if upscale else 1,
                 'sharpen': upscale.sharpen if upscale else 1,
                 'compression': upscale.compression if upscale else 67,
-                'fr': upscale.fr if upscale else 50
+                'fr': upscale.fr if upscale else 50,
+                'model': model.model if model else 'std',
+                'mv': 2 if model and model.needs_mv2 else None
             }
             settings_json = json.dumps(settings, indent=2).replace('"', "'")
 
@@ -203,9 +251,11 @@ class GigapixelAI:
 NODE_CLASS_MAPPINGS = {
     'GigapixelAI': GigapixelAI,
     'GigapixelUpscaleSettings': GigapixelUpscaleSettings,
+    'GigapixelModelSettings': GigapixelModelSettings,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     'GigapixelAI': 'Gigapixel AI',
     'GigapixelUpscaleSettings': 'Gigapixel Upscale Settings',
+    'GigapixelModelSettings': 'Gigapixel Model Settings',
 }
