@@ -1,0 +1,14 @@
+[project]
+name = "gigapixelai"
+description = "Custom nodes use gigapixelai in comfyui."
+version = "1.0.0"
+license = {file = "LICENSE"}
+
+[project.urls]
+Repository = "https://github.com/sh570655308/ComfyUI-GigapixelAI"
+#  Used by Comfy Registry https://comfyregistry.org
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "ComfyUI-GigapixelAI"
+Icon = ""
