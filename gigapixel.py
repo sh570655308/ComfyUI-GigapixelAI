@@ -17,10 +17,10 @@ class GigapixelUpscaleSettings:
         return {
             'required': {
                 'enabled': (['true', 'false'], {'default': 'true'}),
-                'sharpen': ('FLOAT', {'default': 1, 'min': 1, 'max': 100, 'round': False, 'display': 'Sharpen Strength'}),
-                'denoise': ('FLOAT', {'default': 1, 'min': 1, 'max': 100, 'round': False, 'display': 'Denoise Strength'}),
-                'compression': ('FLOAT', {'default': 67, 'min': 1, 'max': 100, 'round': False, 'display': 'Compression'}),
-                'fr': ('FLOAT', {'default': 50, 'min': 1, 'max': 100, 'round': False, 'display': 'Fine Detail Retention'}),
+                'sharpen': ('FLOAT', {'default': 1, 'min': 0, 'max': 100, 'round': False, 'display': 'Sharpen Strength'}),
+                'denoise': ('FLOAT', {'default': 1, 'min': 0, 'max': 100, 'round': False, 'display': 'Denoise Strength'}),
+                'compression': ('FLOAT', {'default': 67, 'min': 0, 'max': 100, 'round': False, 'display': 'Compression'}),
+                'fr': ('FLOAT', {'default': 50, 'min': 0, 'max': 100, 'round': False, 'display': 'Fine Detail Retention'}),
             },
             'optional': {},
         }
@@ -178,16 +178,17 @@ class GigapixelAI:
             gigapixel_args.extend(['-i', img_file])
             gigapixel_args.extend(['-o', target_dir])
             
-            if upscale.denoise > 1:
+            # 只有当参数大于0时才添加
+            if upscale.denoise > 0:
                 gigapixel_args.extend(['--dn', str(upscale.denoise)])
             
-            if upscale.sharpen > 1:
+            if upscale.sharpen > 0:
                 gigapixel_args.extend(['--sh', str(upscale.sharpen)])
             
-            if upscale.compression < 100:
+            if upscale.compression > 0:
                 gigapixel_args.extend(['--cm', str(upscale.compression)])
             
-            if upscale.fr > 1:
+            if upscale.fr > 0:
                 gigapixel_args.extend(['--fr', str(upscale.fr)])
         else:
             gigapixel_args.extend([
@@ -225,10 +226,10 @@ class GigapixelAI:
             
             settings = {
                 'scale': scale,
-                'denoise': upscale.denoise if upscale else 1,
-                'sharpen': upscale.sharpen if upscale else 1,
-                'compression': upscale.compression if upscale else 67,
-                'fr': upscale.fr if upscale else 50,
+                'denoise': upscale.denoise if upscale and upscale.denoise > 0 else None,
+                'sharpen': upscale.sharpen if upscale and upscale.sharpen > 0 else None,
+                'compression': upscale.compression if upscale and upscale.compression > 0 else None,
+                'fr': upscale.fr if upscale and upscale.fr > 0 else None,
                 'model': model.model if model else 'std',
                 'mv': 2 if model and model.needs_mv2 else None
             }
