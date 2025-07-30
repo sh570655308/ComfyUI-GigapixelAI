@@ -21,6 +21,7 @@ class GigapixelUpscaleSettings:
                 'denoise': ('FLOAT', {'default': 1, 'min': 0, 'max': 100, 'round': False, 'display': 'Denoise Strength'}),
                 'compression': ('FLOAT', {'default': 67, 'min': 0, 'max': 100, 'round': False, 'display': 'Compression'}),
                 'fr': ('FLOAT', {'default': 50, 'min': 0, 'max': 100, 'round': False, 'display': 'Fine Detail Retention'}),
+                'pre_downscaling': ('FLOAT', {'default': 75, 'min': 50, 'max': 100, 'round': False, 'display': 'Pre-Downscaling (Recovery only)'}),
             },
             'optional': {},
         }
@@ -32,12 +33,13 @@ class GigapixelUpscaleSettings:
     OUTPUT_NODE = False
     OUTPUT_IS_LIST = (False,)
 
-    def init(self, enabled, sharpen, denoise, compression, fr):
+    def init(self, enabled, sharpen, denoise, compression, fr, pre_downscaling):
         self.enabled = str(True).lower() == enabled.lower()
         self.sharpen = sharpen
         self.denoise = denoise
         self.compression = compression
         self.fr = fr
+        self.pre_downscaling = pre_downscaling
         return (self,)
 
 class GigapixelModelSettings:
@@ -54,7 +56,7 @@ class GigapixelModelSettings:
     }
 
     # 需要添加 mv 2 参数的模型列表
-    MV2_MODELS = {'std', 'fidelity', 'lowres'}
+    MV2_MODELS = {'std', 'fidelity', 'lowres', 'recovery'}
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -209,6 +211,10 @@ class GigapixelAI:
             
             if upscale.fr > 0:
                 gigapixel_args.extend(['--fr', str(upscale.fr)])
+            
+            # Pre-downscaling参数只对recovery模型生效
+            if model and model.model == 'recovery' and upscale.pre_downscaling >= 50:
+                gigapixel_args.extend(['--pds', str(upscale.pre_downscaling)])
         else:
             gigapixel_args.extend([
                 '--scale', str(scale),
@@ -268,6 +274,7 @@ class GigapixelAI:
                 'sharpen': upscale.sharpen if upscale and upscale.sharpen > 0 else None,
                 'compression': upscale.compression if upscale and upscale.compression > 0 else None,
                 'fr': upscale.fr if upscale and upscale.fr > 0 else None,
+                'pre_downscaling': upscale.pre_downscaling if upscale and model and model.model == 'recovery' and upscale.pre_downscaling >= 50 else None,
                 'model': model.model if model else 'std',
                 'mv': 2 if model and model.needs_mv2 else None
             }
