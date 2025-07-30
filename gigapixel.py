@@ -48,7 +48,9 @@ class GigapixelModelSettings:
         'High Fidelity': 'fidelity',
         'Low Resolution': 'lowres',
         'Standard': 'std',
-        'Text & Shapes': 'text'
+        'Text & Shapes': 'text',
+        'Redefine': 'redefine',
+        'Recover': 'recovery'
     }
 
     # 需要添加 mv 2 参数的模型列表
@@ -78,8 +80,8 @@ class GigapixelAI:
     def __init__(self):
         self.this_dir = os.path.dirname(os.path.abspath(__file__))
         self.comfy_dir = os.path.abspath(os.path.join(self.this_dir, '..', '..'))
-        self.output_dir = os.path.join(self.comfy_dir, 'temp', 'gigapixel_output')
-        self.prefix = 'gigapixel'
+        self.output_dir = os.path.join(self.comfy_dir, 'temp', 'gigapixel')
+        self.prefix = 'gpx'
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -88,9 +90,10 @@ class GigapixelAI:
                 'images': ('IMAGE',),
                 'scale': ('FLOAT', {'default': 2.0, 'min': 1, 'max': 16, 'round': False}),
                 'no_temp': (['true', 'false'], {'default': 'true'}),
+                'use_system_command': (['true', 'false'], {'default': 'true'}),
             },
             'optional': {
-                'gigapixel_exe': ('STRING', {'default': '', }),
+                'gigapixel_exe': ('STRING', {'default': 'C:\Program Files\Topaz Labs LLC\Topaz Gigapixel AI\gigapixel.exe', }),
                 'upscale': ('GigapixelUpscaleSettings',),
                 'model': ('GigapixelModelSettings',),
             },
@@ -119,11 +122,11 @@ class GigapixelAI:
         image = torch.from_numpy(image)[None,]
         return image
 
-    def upscale_image(self, images, scale, no_temp, gigapixel_exe=None, upscale: Optional[GigapixelUpscaleSettings]=None, model: Optional[GigapixelModelSettings]=None):
+    def upscale_image(self, images, scale, no_temp, use_system_command, gigapixel_exe=None, upscale: Optional[GigapixelUpscaleSettings]=None, model: Optional[GigapixelModelSettings]=None):
         os.makedirs(self.output_dir, exist_ok=True)
         
         now_millis = int(time.time() * 1000)
-        batch_dir = os.path.join(self.output_dir, f'batch_{now_millis}')
+        batch_dir = os.path.join(self.output_dir, f'b{now_millis}')
         os.makedirs(batch_dir, exist_ok=True)
         
         upscaled_images = []
@@ -137,13 +140,13 @@ class GigapixelAI:
                 i = 255.0 * image.cpu().numpy()
                 img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
                 
-                img_file = os.path.join(batch_dir, f'input_{count}.png')
+                img_file = os.path.join(batch_dir, f'i{count}.png')
                 self.save_image(img, os.path.dirname(img_file), os.path.basename(img_file))
                 
-                output_dir = os.path.join(batch_dir, f'output_{count}')
+                output_dir = os.path.join(batch_dir, f'o{count}')
                 os.makedirs(output_dir, exist_ok=True)
                 
-                (settings, output_image_paths) = self.gigapixel_upscale(img_file, gigapixel_exe, scale, upscale, model, output_dir)
+                (settings, output_image_paths) = self.gigapixel_upscale(img_file, gigapixel_exe, scale, upscale, model, output_dir, use_system_command)
                 
                 for output_path in output_image_paths:
                     upscaled_image = self.load_image(output_path)
@@ -160,9 +163,16 @@ class GigapixelAI:
 
         return (upscale_settings, upscale_image_paths, upscaled_images)
 
-    def gigapixel_upscale(self, img_file, gigapixel_exe, scale, upscale: Optional[GigapixelUpscaleSettings]=None, model: Optional[GigapixelModelSettings]=None, target_dir=None):
-        if not os.path.exists(gigapixel_exe):
+    def gigapixel_upscale(self, img_file, gigapixel_exe, scale, upscale: Optional[GigapixelUpscaleSettings]=None, model: Optional[GigapixelModelSettings]=None, target_dir=None, use_system_command=True):
+        # 根据开关决定使用系统命令还是完整路径
+        use_system_cmd = str(True).lower() == str(use_system_command).lower()
+        
+        if not use_system_cmd and not os.path.exists(gigapixel_exe):
             raise ValueError(f'Gigapixel AI not found: {gigapixel_exe}')
+        
+        print(f"检查输入文件是否存在: {os.path.exists(img_file)}")
+        print(f"输入文件大小: {os.path.getsize(img_file) if os.path.exists(img_file) else 'file not found'}")
+        print(f"输出目录权限检查: {os.access(os.path.dirname(target_dir), os.W_OK)}")
         
         if target_dir is None:
             target_dir = os.path.join(self.output_dir, 'default_output')
@@ -171,7 +181,16 @@ class GigapixelAI:
         if len(img_file) > 250 or len(target_dir) > 250:
             raise ValueError(f"Path too long. Input: {len(img_file)} chars, Output: {len(target_dir)} chars")
         
-        gigapixel_args = [gigapixel_exe]
+        # 使用引号包裹带空格的路径
+        if use_system_cmd:
+            command_exe = 'gigapixel'
+        else:
+            command_exe = f'"{gigapixel_exe}"'
+        
+        img_file = f'"{img_file}"'
+        target_dir = f'"{target_dir}"'
+        
+        gigapixel_args = [command_exe]
         
         if upscale and upscale.enabled:
             gigapixel_args.extend(['--scale', str(scale)])
@@ -207,22 +226,41 @@ class GigapixelAI:
         try:
             print(f"执行命令: {' '.join(gigapixel_args)}")
             
-            result = subprocess.run(
-                gigapixel_args, 
-                capture_output=True, 
-                text=True, 
-                timeout=600, 
-                check=True
-            )
+            # 根据是否使用系统命令决定是否需要shell=True
+            if use_system_cmd:
+                # 使用系统命令时，在Windows下需要shell=True
+                result = subprocess.run(
+                    ' '.join(gigapixel_args), 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=600, 
+                    check=False,
+                    shell=True  # Windows系统命令需要shell=True
+                )
+            else:
+                # 使用完整路径时，可以直接执行
+                result = subprocess.run(
+                    ' '.join(gigapixel_args), 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=600, 
+                    check=False
+                )
             
             print("Gigapixel running:")
             print(result.stdout)
             
+            # 检查输出目录中是否有文件
             output_images = [
-                os.path.join(target_dir, f) 
-                for f in os.listdir(target_dir) 
+                os.path.join(target_dir.strip('"'), f) 
+                for f in os.listdir(target_dir.strip('"')) 
                 if f.endswith(('.png', '.jpg', '.jpeg', '.tif', '.tiff'))
             ]
+            
+            if not output_images:
+                target_dir_clean = target_dir.strip('"')
+                print(f"警告: 没有找到输出文件，检查目录: {target_dir_clean}")
+                raise ValueError("Gigapixel AI 没有生成输出文件")
             
             settings = {
                 'scale': scale,
@@ -239,11 +277,6 @@ class GigapixelAI:
         
         except subprocess.TimeoutExpired:
             print("Gigapixel timeout")
-            raise
-        except subprocess.CalledProcessError as e:
-            print(f"Gigapixel CLI error code: {e.returncode}")
-            print(f"STDOUT: {e.stdout}")
-            print(f"STDERR: {e.stderr}")
             raise
         except Exception as e:
             print(f"error while processing: {e}")
